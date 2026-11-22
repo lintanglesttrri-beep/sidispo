@@ -1,0 +1,96 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-plus-jakarta), ui-sans-serif, system-ui, sans-serif;
+  --color-stp-obsidian: #020617;
+  --color-stp-navy: #0a2540;
+  --color-stp-gold: #f59e0b;
+  --color-stp-gold-dark: #d97706;
+  --color-stp-surface: #f8fafc;
+}
+
+@layer base {
+  :root {
+    --primary-obsidian: #020617;
+    --primary-accent: #f59e0b;
+    --primary-accent-dark: #d97706;
+    --surface-white: #ffffff;
+    --surface-light: #f8fafc;
+    --border-light: #e2e8f0;
+  }
+}
+
+/* Card cascade entrance animation (adapted from SIVIKA) */
+@keyframes cardEnter {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-card-enter {
+  animation: cardEnter 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.stagger-1 { animation-delay: 0.04s; }
+.stagger-2 { animation-delay: 0.08s; }
+.stagger-3 { animation-delay: 0.12s; }
+.stagger-4 { animation-delay: 0.16s; }
+.stagger-5 { animation-delay: 0.20s; }
+.stagger-6 { animation-delay: 0.24s; }
+
+/* Gentle floating ambient animation (adapted from SIVIKA) */
+@keyframes floatSlow {
+  0%, 100% {
+    transform: translateY(0px) scale(1);
+  }
+  50% {
+    transform: translateY(-8px) scale(1.02);
+  }
+}
+
+.animate-float {
+  animation: floatSlow 7s ease-in-out infinite;
+}
+
+.animate-float-delayed {
+  animation: floatSlow 9s ease-in-out 2s infinite;
+}
+
+/* Subtle gold glowing pulse */
+@keyframes pulseGlowGold {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.18);
+  }
+  50% {
+    box-shadow: 0 0 16px 4px rgba(245, 158, 11, 0.32);
+  }
+}
+
+.animate-glow-gold {
+  animation: pulseGlowGold 2.8s infinite;
+}
+
+/* Custom scrollbar (adapted from SIVIKA) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}

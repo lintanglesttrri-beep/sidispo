@@ -1,0 +1,40 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+
+# next.js
+/.next/
+/out/
+/build
+
+# prisma generated client
+/generated/
+
+# env files (NEVER commit secrets)
+.env
+.env.local
+.env.*.local
+
+# debug & logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# vercel
+.vercel
+
+# local storage / backups
+/storage/
+/backups/
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# copied pdf worker
+public/pdf.worker.min.mjs
+
+# reference project (nested repo)
+/sivika/
