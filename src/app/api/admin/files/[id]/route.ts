@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentAdmin } from "@/lib/auth";
+import { canViewSurat, getCurrentAdmin } from "@/lib/auth";
 import { downloadSuratFile } from "@/lib/storage";
 import { createSupabaseAdmin } from "@/lib/supabase/server";
 
@@ -17,12 +17,18 @@ export async function GET(
 
   const { data: surat } = await db
     .from("surat")
-    .select("file_path, file_mime, file_name")
+    .select("id, divisi_id, file_path, file_mime, file_name")
     .eq("id", id)
     .single();
 
   if (!surat) {
     return new NextResponse("Not Found", { status: 404 });
+  }
+
+  // Enforce multi-division read access (Superadmin, owner division, or incoming letter to admin's division)
+  const allowed = await canViewSurat(admin, surat.id, surat.divisi_id);
+  if (!allowed) {
+    return new NextResponse("Forbidden", { status: 403 });
   }
 
   try {

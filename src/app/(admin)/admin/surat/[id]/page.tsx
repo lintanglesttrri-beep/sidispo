@@ -1,5 +1,6 @@
 import React from "react";
 import { notFound } from "next/navigation";
+import { canManageSurat, canViewSurat, requireAdmin } from "@/lib/auth";
 import { createSupabaseAdmin } from "@/lib/supabase/server";
 import { buildReminderMessage, buildWaMeUrl } from "@/lib/wa/provider";
 import {
@@ -16,6 +17,7 @@ export default async function SuratDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const admin = await requireAdmin();
   const { id } = await params;
   const db = createSupabaseAdmin();
 
@@ -23,14 +25,14 @@ export default async function SuratDetailPage({
     db
       .from("surat")
       .select(
-        "id, kode_arsip, perihal, pengirim, nomor_surat, file_name, file_mime, file_size, is_segera, batas_tindak_lanjut, created_at, profiles(nama)"
+        "id, divisi_id, kode_arsip, perihal, pengirim, nomor_surat, file_name, file_mime, file_size, is_segera, batas_tindak_lanjut, created_at, profiles(nama), divisi(nama, kode)"
       )
       .eq("id", id)
       .single(),
     db
       .from("disposisi")
       .select(
-        "id, catatan, token_version, token_expires_at, revoked_at, wa_status, wa_sent_at, opened_at, confirmed_at, status, reminder_sent_at, created_at, penerima(nama, jabatan, divisi, no_wa)"
+        "id, catatan, token_version, token_expires_at, revoked_at, wa_status, wa_sent_at, opened_at, confirmed_at, status, reminder_sent_at, created_at, penerima(nama, jabatan, divisi, no_wa, divisi_rel:divisi(nama))"
       )
       .eq("surat_id", id)
       .order("created_at", { ascending: true }),
@@ -47,14 +49,21 @@ export default async function SuratDetailPage({
     notFound();
   }
 
+  const allowed = await canViewSurat(admin, surat.id, surat.divisi_id);
+  if (!allowed) {
+    notFound();
+  }
+
   const creator = Array.isArray(surat.profiles)
     ? surat.profiles[0]
     : surat.profiles;
+  const divisiObj = Array.isArray(surat.divisi) ? surat.divisi[0] : surat.divisi;
   const now = new Date();
 
   const data: SuratDetailData = {
     id: surat.id,
     kodeArsip: surat.kode_arsip,
+    divisiNama: divisiObj?.nama || "-",
     perihal: surat.perihal,
     pengirim: surat.pengirim,
     nomorSurat: surat.nomor_surat,
@@ -64,9 +73,15 @@ export default async function SuratDetailPage({
     isSegera: surat.is_segera,
     batasTindakLanjut: surat.batas_tindak_lanjut,
     createdAt: surat.created_at,
-    createdByNama: creator?.nama || "Admin Sekretariat",
+    createdByNama: creator?.nama || "Admin",
+    canManage: canManageSurat(admin, surat.divisi_id),
     disposisi: (dispRes.data ?? []).map((d) => {
       const p = Array.isArray(d.penerima) ? d.penerima[0] : d.penerima;
+      const pDivRel = p && "divisi_rel" in p
+        ? Array.isArray(p.divisi_rel)
+          ? p.divisi_rel[0]
+          : p.divisi_rel
+        : null;
       const expDate = new Date(d.token_expires_at);
       const reminderMsg = buildReminderMessage({
         namaPenerima: p?.nama || "Penerima",
@@ -78,7 +93,7 @@ export default async function SuratDetailPage({
         id: d.id,
         penerimaNama: p?.nama || "-",
         penerimaJabatan: p?.jabatan || "-",
-        penerimaDivisi: p?.divisi || "",
+        penerimaDivisi: pDivRel?.nama || p?.divisi || "",
         penerimaNoWa: p?.no_wa || "",
         catatan: d.catatan,
         tokenVersion: d.token_version,

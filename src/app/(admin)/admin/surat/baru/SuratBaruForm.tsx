@@ -16,6 +16,7 @@ import {
   Send,
   ExternalLink,
   ArrowRight,
+  Building2,
 } from "lucide-react";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import {
@@ -28,17 +29,36 @@ export interface PenerimaOption {
   id: string;
   nama: string;
   jabatan: string;
-  divisi: string;
+  divisiId: string | null;
+  divisiNama: string;
+  divisiKode: string;
   noWa: string;
+}
+
+export interface DivisiChoice {
+  id: string;
+  nama: string;
+  kode: string;
 }
 
 export function SuratBaruForm({
   penerimaList,
+  divisiList,
+  isSuperadmin,
+  adminDivisiId,
+  adminDivisiNama,
   maxUploadMb,
 }: {
   penerimaList: PenerimaOption[];
+  divisiList: DivisiChoice[];
+  isSuperadmin: boolean;
+  adminDivisiId: string | null;
+  adminDivisiNama: string | null;
   maxUploadMb: number;
 }) {
+  const [senderDivisiId, setSenderDivisiId] = useState<string>(
+    adminDivisiId || divisiList[0]?.id || ""
+  );
   const [file, setFile] = useState<File | null>(null);
   const [perihal, setPerihal] = useState("");
   const [pengirim, setPengirim] = useState("");
@@ -47,11 +67,13 @@ export function SuratBaruForm({
   const [batasTindakLanjut, setBatasTindakLanjut] = useState("");
   const [catatan, setCatatan] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [filterDivisiId, setFilterDivisiId] = useState<string>(
+    !isSuperadmin && adminDivisiId ? adminDivisiId : "all"
+  );
   const [recipientSearch, setRecipientSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  // Success screen state
   const [createdResult, setCreatedResult] = useState<{
     suratId: string;
     kodeArsip: string;
@@ -62,16 +84,35 @@ export function SuratBaruForm({
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
   const [markedSentIds, setMarkedSentIds] = useState<Record<string, boolean>>({});
 
+  const countByDivisi = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of penerimaList) {
+      if (p.divisiId) {
+        map.set(p.divisiId, (map.get(p.divisiId) ?? 0) + 1);
+      }
+    }
+    return map;
+  }, [penerimaList]);
+
   const filteredRecipients = useMemo(() => {
     const q = recipientSearch.trim().toLowerCase();
-    if (!q) return penerimaList;
-    return penerimaList.filter(
-      (p) =>
+    return penerimaList.filter((p) => {
+      if (filterDivisiId !== "all" && p.divisiId !== filterDivisiId) {
+        return false;
+      }
+      if (!q) return true;
+      return (
         p.nama.toLowerCase().includes(q) ||
         p.jabatan.toLowerCase().includes(q) ||
-        p.divisi.toLowerCase().includes(q)
-    );
-  }, [penerimaList, recipientSearch]);
+        p.divisiNama.toLowerCase().includes(q)
+      );
+    });
+  }, [penerimaList, filterDivisiId, recipientSearch]);
+
+  const selectedRecipients = useMemo(
+    () => penerimaList.filter((p) => selectedIds.includes(p.id)),
+    [penerimaList, selectedIds]
+  );
 
   const toggleRecipient = (id: string) => {
     setSelectedIds((prev) =>
@@ -79,10 +120,29 @@ export function SuratBaruForm({
     );
   };
 
+  const allFilteredSelected =
+    filteredRecipients.length > 0 &&
+    filteredRecipients.every((p) => selectedIds.includes(p.id));
+
+  const toggleSelectFiltered = () => {
+    if (allFilteredSelected) {
+      const filteredSet = new Set(filteredRecipients.map((p) => p.id));
+      setSelectedIds((prev) => prev.filter((id) => !filteredSet.has(id)));
+    } else {
+      setSelectedIds((prev) =>
+        Array.from(new Set([...prev, ...filteredRecipients.map((p) => p.id)]))
+      );
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
+    if (!senderDivisiId) {
+      setError("Silakan pilih divisi pengirim surat.");
+      return;
+    }
     if (!file) {
       setError("Silakan unggah berkas scan surat (PDF, JPG, atau PNG).");
       return;
@@ -93,6 +153,7 @@ export function SuratBaruForm({
     }
 
     const fd = new FormData();
+    fd.append("divisiId", senderDivisiId);
     fd.append("file", file);
     fd.append("perihal", perihal);
     fd.append("pengirim", pengirim);
@@ -138,7 +199,6 @@ export function SuratBaruForm({
   if (createdResult) {
     return (
       <div className="space-y-6 animate-card-enter">
-        {/* Highlight Kode Arsip Banner (PRD §4.2: Pengarsipan dokumen fisik) */}
         <div className="bg-slate-950 text-white rounded-3xl p-6 sm:p-8 border border-slate-800 shadow-xl relative overflow-hidden">
           <div className="absolute -top-20 -right-20 w-72 h-72 bg-amber-500/15 rounded-full blur-3xl pointer-events-none" />
           <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -151,7 +211,7 @@ export function SuratBaruForm({
                 Tuliskan Kode Arsip Berikut pada Surat Fisik Asli:
               </h2>
               <p className="text-xs sm:text-sm text-slate-400">
-                Simpan surat fisik di ordner/lemari sekretariat sesuai urutan kode arsip.
+                Simpan surat fisik di ordner divisi sesuai urutan kode arsip.
               </p>
             </div>
 
@@ -180,7 +240,6 @@ export function SuratBaruForm({
           </div>
         </div>
 
-        {/* Distribusi WhatsApp per Penerima */}
         <div className="bg-white rounded-3xl border border-slate-200/90 shadow-xs p-6 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
             <div>
@@ -202,16 +261,22 @@ export function SuratBaruForm({
 
           <div className="divide-y divide-slate-100">
             {createdResult.dispatches.map((d) => {
-              const isSent = markedSentIds[d.disposisiId] || d.waStatus === "SENT";
+              const isSent =
+                markedSentIds[d.disposisiId] || d.waStatus === "SENT";
               return (
                 <div
                   key={d.disposisiId}
                   className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                 >
                   <div>
-                    <p className="font-extrabold text-sm text-slate-950">
-                      {d.namaPenerima}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-extrabold text-sm text-slate-950">
+                        {d.namaPenerima}
+                      </p>
+                      <span className="text-[10px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">
+                        {d.divisiNama}
+                      </span>
+                    </div>
                     <p className="text-xs text-slate-500">
                       {d.jabatan} • <span className="font-mono">+{d.noWa}</span>
                     </p>
@@ -226,7 +291,6 @@ export function SuratBaruForm({
                         setTimeout(() => setCopiedLinkId(null), 2000);
                       }}
                       className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer"
-                      title="Salin tautan khusus penerima"
                     >
                       {copiedLinkId === d.disposisiId ? (
                         <>
@@ -290,13 +354,13 @@ export function SuratBaruForm({
               }}
               className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs cursor-pointer"
             >
-              + Input Surat Lainnya
+              + Catat Surat Lainnya
             </button>
             <Link
               href="/admin/surat"
               className="px-5 py-2.5 rounded-xl bg-slate-950 hover:bg-black text-white font-extrabold text-xs"
             >
-              Kembali ke Monitoring Surat
+              Kembali ke Daftar Surat
             </Link>
           </div>
         </div>
@@ -310,10 +374,13 @@ export function SuratBaruForm({
         badge="Pencatatan & Distribusi"
         badgeIcon={<FilePlus2 className="w-3.5 h-3.5 text-slate-700" />}
         title="Catat Surat & Kirim Disposisi"
-        description="Unggah hasil scan surat, lengkapi informasi surat, pilih penerima, dan tulis catatan arahan dalam satu halaman."
+        description="Unggah hasil scan surat, lengkapi informasi surat, pilih penerima dari divisi sendiri maupun divisi lain, lalu simpan."
       />
 
-      <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <form
+        onSubmit={handleSubmit}
+        className="grid grid-cols-1 lg:grid-cols-12 gap-6"
+      >
         {/* Left: File & Metadata */}
         <div className="lg:col-span-7 space-y-6">
           {error && (
@@ -325,6 +392,41 @@ export function SuratBaruForm({
               <span>{error}</span>
             </div>
           )}
+
+          {/* Divisi Pencatat (Superadmin dropdown / Admin Divisi fixed badge) */}
+          <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2.5 rounded-xl bg-slate-100 text-slate-800">
+                <Building2 className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
+                  Dicatat Atas Nama Divisi
+                </p>
+                {!isSuperadmin && (
+                  <p className="text-sm font-black text-slate-950">
+                    {adminDivisiNama || "Belum terhubung ke divisi"}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {isSuperadmin && (
+              <select
+                required
+                value={senderDivisiId}
+                onChange={(e) => setSenderDivisiId(e.target.value)}
+                className="bg-slate-50 border border-slate-200 rounded-2xl px-4 py-2.5 text-xs sm:text-sm font-bold text-slate-900 focus:outline-none focus:border-slate-950"
+              >
+                <option value="">-- Pilih Divisi Pencatat --</option>
+                {divisiList.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.nama} ({d.kode})
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
 
           {/* Upload Dropzone */}
           <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs p-6 space-y-3">
@@ -418,7 +520,8 @@ export function SuratBaruForm({
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Nomor Surat <span className="text-slate-400 font-normal">(Opsional)</span>
+                  Nomor Surat{" "}
+                  <span className="text-slate-400 font-normal">(Opsional)</span>
                 </label>
                 <input
                   type="text"
@@ -433,7 +536,8 @@ export function SuratBaruForm({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center pt-1">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Batas Tindak Lanjut <span className="text-slate-400 font-normal">(Opsional)</span>
+                  Batas Tindak Lanjut{" "}
+                  <span className="text-slate-400 font-normal">(Opsional)</span>
                 </label>
                 <input
                   type="date"
@@ -463,7 +567,7 @@ export function SuratBaruForm({
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                Catatan / Instruksi Disposisi Pimpinan
+                Catatan / Instruksi Disposisi
               </label>
               <textarea
                 rows={4}
@@ -476,46 +580,70 @@ export function SuratBaruForm({
           </div>
         </div>
 
-        {/* Right: Multi-select Recipients & Submit */}
+        {/* Right: Multi-select Recipients with Division Filter Dropdown */}
         <div className="lg:col-span-5 space-y-6">
           <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs p-6 space-y-4">
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs font-extrabold text-slate-700 uppercase tracking-wider">
                 3. Pilih Penerima Disposisi *
               </p>
-              <div className="flex items-center gap-2">
-                {penerimaList.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSelectedIds(
-                        selectedIds.length === penerimaList.length
-                          ? []
-                          : penerimaList.map((p) => p.id)
-                      )
-                    }
-                    className="text-[11px] font-bold text-slate-600 hover:text-slate-950 underline cursor-pointer"
-                  >
-                    {selectedIds.length === penerimaList.length
-                      ? "Hapus Semua"
-                      : "Pilih Semua"}
-                  </button>
-                )}
-                <span className="text-xs font-black bg-slate-950 text-amber-400 px-2.5 py-0.5 rounded-full">
-                  {selectedIds.length} dipilih
-                </span>
+              <span className="text-xs font-black bg-slate-950 text-amber-400 px-2.5 py-0.5 rounded-full">
+                {selectedIds.length} dipilih
+              </span>
+            </div>
+
+            {/* Dropdown Filter Divisi */}
+            <div className="space-y-1.5">
+              <label
+                htmlFor="filter-divisi"
+                className="block text-[11px] font-bold text-slate-500"
+              >
+                Saring Kontak Person Berdasarkan Divisi:
+              </label>
+              <div className="relative">
+                <Building2 className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <select
+                  id="filter-divisi"
+                  value={filterDivisiId}
+                  onChange={(e) => setFilterDivisiId(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-xs font-bold text-slate-900 focus:outline-none focus:border-slate-950 cursor-pointer"
+                >
+                  <option value="all">
+                    Semua Divisi ({penerimaList.length})
+                  </option>
+                  {divisiList.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.nama} ({countByDivisi.get(d.id) ?? 0})
+                      {!isSuperadmin && d.id === adminDivisiId
+                        ? " — Divisi Saya"
+                        : ""}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
-            <div className="relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={recipientSearch}
-                onChange={(e) => setRecipientSearch(e.target.value)}
-                placeholder="Cari nama atau divisi..."
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-slate-950"
-              />
+            {/* Search + Select all in filtered division */}
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={recipientSearch}
+                  onChange={(e) => setRecipientSearch(e.target.value)}
+                  placeholder="Cari nama atau jabatan..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-slate-950"
+                />
+              </div>
+              {filteredRecipients.length > 0 && (
+                <button
+                  type="button"
+                  onClick={toggleSelectFiltered}
+                  className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-[11px] font-bold text-slate-800 whitespace-nowrap cursor-pointer"
+                >
+                  {allFilteredSelected ? "Batal Pilih" : "Pilih Semua"}
+                </button>
+              )}
             </div>
 
             {penerimaList.length === 0 ? (
@@ -525,11 +653,15 @@ export function SuratBaruForm({
                   href="/admin/penerima"
                   className="font-bold text-slate-950 underline"
                 >
-                  Tambah di Master Penerima
+                  Tambah di Daftar Penerima
                 </Link>
               </div>
+            ) : filteredRecipients.length === 0 ? (
+              <div className="p-6 text-center rounded-2xl border border-dashed border-slate-200 text-xs text-slate-500">
+                Belum ada penerima aktif di divisi ini.
+              </div>
             ) : (
-              <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
+              <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
                 {filteredRecipients.map((p) => {
                   const checked = selectedIds.includes(p.id);
                   return (
@@ -544,16 +676,26 @@ export function SuratBaruForm({
                       }`}
                     >
                       <div className="min-w-0">
-                        <p className="text-xs font-extrabold truncate">
-                          {p.nama}
-                        </p>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="text-xs font-extrabold truncate">
+                            {p.nama}
+                          </p>
+                          <span
+                            className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                              checked
+                                ? "bg-white/15 text-amber-300"
+                                : "bg-slate-200/80 text-slate-700"
+                            }`}
+                          >
+                            {p.divisiNama}
+                          </span>
+                        </div>
                         <p
-                          className={`text-[11px] truncate ${
+                          className={`text-[11px] truncate mt-0.5 ${
                             checked ? "text-slate-300" : "text-slate-500"
                           }`}
                         >
                           {p.jabatan}
-                          {p.divisi ? ` • ${p.divisi}` : ""}
                         </p>
                       </div>
                       <div
@@ -571,10 +713,48 @@ export function SuratBaruForm({
               </div>
             )}
 
-            <div className="pt-4 border-t border-slate-100 space-y-3">
+            {/* Persistent Selected Chips across divisions */}
+            {selectedRecipients.length > 0 && (
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                <div className="flex items-center justify-between text-[11px] font-extrabold text-slate-600">
+                  <span>Penerima Terpilih ({selectedRecipients.length})</span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedIds([])}
+                    className="text-rose-600 hover:underline cursor-pointer"
+                  >
+                    Kosongkan
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {selectedRecipients.map((p) => (
+                    <span
+                      key={p.id}
+                      className="inline-flex items-center gap-1 bg-slate-950 text-white text-[11px] font-bold pl-2.5 pr-1.5 py-1 rounded-full"
+                    >
+                      <span className="truncate max-w-[140px]">{p.nama}</span>
+                      <span className="text-[9px] text-amber-300">
+                        ({p.divisiKode || p.divisiNama})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => toggleRecipient(p.id)}
+                        className="p-0.5 hover:bg-white/20 rounded-full cursor-pointer"
+                        aria-label={`Hapus ${p.nama}`}
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="pt-3 border-t border-slate-100 space-y-3">
               <p className="text-[11px] text-slate-500 leading-relaxed">
-                Saat disimpan, sistem otomatis membuat <strong>1 kode arsip</strong>{" "}
-                dan <strong>1 tautan khusus yang aman</strong> untuk setiap
+                Saat disimpan, sistem otomatis membuat{" "}
+                <strong>1 kode arsip divisi</strong> dan{" "}
+                <strong>1 tautan khusus yang aman</strong> untuk setiap
                 penerima (berlaku 30 hari).
               </p>
 

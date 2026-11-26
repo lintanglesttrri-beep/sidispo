@@ -3,8 +3,10 @@ import type { Metadata } from "next";
 import {
   Building2,
   CalendarClock,
+  ExternalLink,
   FileText,
   MessageSquareText,
+  Phone,
   ShieldAlert,
   User,
 } from "lucide-react";
@@ -20,6 +22,7 @@ import { isSupabaseAdminConfigured } from "@/lib/env";
 import { formatTanggalIndo, formatTanggalWaktuIndo } from "@/lib/format";
 import { createSupabaseAdmin } from "@/lib/supabase/server";
 import { hashToken, isValidTokenFormat } from "@/lib/token";
+import { buildWaMeUrl } from "@/lib/wa/provider";
 
 export const dynamic = "force-dynamic";
 
@@ -46,10 +49,10 @@ function InvalidTokenView() {
           </h1>
           <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
             Tautan disposisi ini tidak valid, telah kedaluwarsa, atau aksesnya
-            sudah dicabut oleh Sekretariat Solo Techno Park.
+            sudah dinonaktifkan oleh divisi pengirim.
           </p>
           <p className="text-[11px] text-slate-500 pt-2 border-t border-slate-100">
-            Silakan hubungi Admin Sekretariat STP jika Anda membutuhkan tautan
+            Silakan hubungi admin divisi pengirim jika Anda membutuhkan tautan
             baru untuk membuka surat ini.
           </p>
         </div>
@@ -77,7 +80,7 @@ export default async function ReceiverDispositionPage({
   const { data: disposisi } = await db
     .from("disposisi")
     .select(
-      "id, surat_id, catatan, token_expires_at, revoked_at, opened_at, confirmed_at, status, surat(kode_arsip, perihal, pengirim, nomor_surat, file_name, file_mime, is_segera, batas_tindak_lanjut), penerima(nama, jabatan, divisi)"
+      "id, surat_id, catatan, token_expires_at, revoked_at, opened_at, confirmed_at, status, surat(divisi_id, kode_arsip, perihal, pengirim, nomor_surat, file_name, file_mime, is_segera, batas_tindak_lanjut, divisi(nama, kontak_nama, kontak_wa)), penerima(nama, jabatan, divisi)"
     )
     .eq("token_hash", tokenHash)
     .single();
@@ -101,7 +104,10 @@ export default async function ReceiverDispositionPage({
     return <InvalidTokenView />;
   }
 
-  // Record first open atomically without overwriting opened_at (PRD §7.1)
+  const senderDiv = Array.isArray(suratObj.divisi)
+    ? suratObj.divisi[0]
+    : suratObj.divisi;
+
   const { data: firstOpenRows } = await db
     .from("disposisi")
     .update({ opened_at: nowIso, updated_at: nowIso })
@@ -110,6 +116,7 @@ export default async function ReceiverDispositionPage({
     .select("id");
 
   await logAudit({
+    divisiId: suratObj.divisi_id,
     suratId: disposisi.surat_id,
     disposisiId: disposisi.id,
     eventType:
@@ -120,6 +127,12 @@ export default async function ReceiverDispositionPage({
   }).catch(() => {});
 
   const fileUrl = `/api/files/${encodeURIComponent(rawToken)}`;
+  const contactWaUrl = senderDiv?.kontak_wa
+    ? buildWaMeUrl(
+        senderDiv.kontak_wa,
+        `Halo ${senderDiv.kontak_nama || "Admin"}, saya ${penerimaObj.nama} ingin menanyakan terkait disposisi surat kode arsip ${suratObj.kode_arsip} (${suratObj.perihal}).`
+      )
+    : null;
 
   return (
     <div className="min-h-screen bg-slate-50 pb-28">
@@ -160,7 +173,7 @@ export default async function ReceiverDispositionPage({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
             <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80">
               <p className="text-[10px] font-extrabold uppercase text-slate-400 flex items-center gap-1">
-                <Building2 className="w-3 h-3" /> Pengirim
+                <Building2 className="w-3 h-3" /> Pengirim Surat
               </p>
               <p className="text-xs font-extrabold text-slate-900 mt-1">
                 {suratObj.pengirim}
@@ -199,12 +212,42 @@ export default async function ReceiverDispositionPage({
             </p>
           </div>
 
+          {/* Kontak Person Divisi Pengirim */}
+          {senderDiv && (
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                  Dikirim oleh Divisi {senderDiv.nama} • Kontak Person
+                </p>
+                <p className="text-xs sm:text-sm font-extrabold text-slate-900 mt-0.5">
+                  {senderDiv.kontak_nama || `Admin Divisi ${senderDiv.nama}`}
+                </p>
+              </div>
+              {contactWaUrl && (
+                <a
+                  href={contactWaUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shrink-0 transition-all"
+                >
+                  <Phone className="w-3.5 h-3.5" />
+                  <span>Hubungi via WhatsApp</span>
+                  <ExternalLink className="w-3 h-3 opacity-80" />
+                </a>
+              )}
+            </div>
+          )}
+
           <p className="text-[11px] text-slate-400 font-medium">
-            Tautan akses ini berlaku hingga{" "}
+            Tautan ini berlaku hingga{" "}
             <strong className="text-slate-600">
               {formatTanggalWaktuIndo(disposisi.token_expires_at)}
             </strong>
-            . Dokumen fisik asli disimpan di Sekretariat STP dengan kode arsip{" "}
+            . Dokumen fisik asli disimpan di ordner{" "}
+            <strong className="text-slate-600">
+              Divisi {senderDiv?.nama || "Sekretariat"}
+            </strong>{" "}
+            dengan kode arsip{" "}
             <strong className="font-mono text-slate-600">
               {suratObj.kode_arsip}
             </strong>

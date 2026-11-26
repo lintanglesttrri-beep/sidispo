@@ -42,7 +42,7 @@ export async function confirmReceiptAction(
 
   const { data: existing } = await db
     .from("disposisi")
-    .select("id, surat_id, revoked_at, token_expires_at, confirmed_at")
+    .select("id, surat_id, revoked_at, token_expires_at, confirmed_at, surat(divisi_id)")
     .eq("token_hash", tokenHash)
     .single();
 
@@ -80,7 +80,11 @@ export async function confirmReceiptAction(
     .select("id");
 
   if (updatedRows && updatedRows.length === 1) {
+    const suratObj = Array.isArray(existing.surat)
+      ? existing.surat[0]
+      : existing.surat;
     await logAudit({
+      divisiId: suratObj?.divisi_id ?? null,
       suratId: existing.surat_id,
       disposisiId: existing.id,
       eventType: "CONFIRMED",

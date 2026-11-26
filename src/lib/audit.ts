@@ -18,12 +18,18 @@ export type AuditEventType =
   | "PENERIMA_CREATED"
   | "PENERIMA_UPDATED"
   | "PENERIMA_DELETED"
+  | "DIVISI_CREATED"
+  | "DIVISI_UPDATED"
+  | "ADMIN_ACCOUNT_CREATED"
+  | "ADMIN_ACCOUNT_UPDATED"
+  | "ADMIN_ACCOUNT_DEACTIVATED"
   | "ADMIN_LOGIN"
   | "ADMIN_LOGOUT";
 
 export interface AuditEntryInput {
   actorId?: string | null;
   actorEmail?: string | null;
+  divisiId?: string | null;
   suratId?: string | null;
   disposisiId?: string | null;
   eventType: AuditEventType;
@@ -38,6 +44,7 @@ export async function logAudit(entry: AuditEntryInput): Promise<void> {
   await db.from("audit_logs").insert({
     actor_id: entry.actorId ?? null,
     actor_email: entry.actorEmail ?? null,
+    divisi_id: entry.divisiId ?? null,
     surat_id: entry.suratId ?? null,
     disposisi_id: entry.disposisiId ?? null,
     event_type: entry.eventType,

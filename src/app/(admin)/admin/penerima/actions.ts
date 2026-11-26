@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
-import { requireAdmin } from "@/lib/auth";
+import { isSuperadmin, requireAdmin } from "@/lib/auth";
 import { createSupabaseAdmin } from "@/lib/supabase/server";
 import { penerimaSchema } from "@/lib/validators";
 
@@ -14,12 +14,19 @@ export interface ActionResult {
 export async function createPenerimaAction(input: {
   nama: string;
   jabatan: string;
-  divisi: string;
+  divisiId: string;
   noWa: string;
   isActive: boolean;
 }): Promise<ActionResult> {
   const admin = await requireAdmin();
-  const parsed = penerimaSchema.safeParse(input);
+  const targetDivisiId = isSuperadmin(admin)
+    ? input.divisiId
+    : admin.divisiId || "";
+
+  const parsed = penerimaSchema.safeParse({
+    ...input,
+    divisiId: targetDivisiId,
+  });
   if (!parsed.success) {
     return {
       ok: false,
@@ -28,12 +35,23 @@ export async function createPenerimaAction(input: {
   }
 
   const db = createSupabaseAdmin();
+  const { data: divRow } = await db
+    .from("divisi")
+    .select("id, nama")
+    .eq("id", parsed.data.divisiId)
+    .single();
+
+  if (!divRow) {
+    return { ok: false, error: "Divisi yang dipilih tidak ditemukan." };
+  }
+
   const { data: created, error } = await db
     .from("penerima")
     .insert({
       nama: parsed.data.nama,
       jabatan: parsed.data.jabatan,
-      divisi: parsed.data.divisi,
+      divisi: divRow.nama,
+      divisi_id: divRow.id,
       no_wa: parsed.data.noWa,
       is_active: parsed.data.isActive,
     })
@@ -47,12 +65,14 @@ export async function createPenerimaAction(input: {
   await logAudit({
     actorId: admin.id,
     actorEmail: admin.email,
+    divisiId: divRow.id,
     eventType: "PENERIMA_CREATED",
-    eventData: { penerimaId: created.id, nama: created.nama },
+    eventData: { penerimaId: created.id, nama: created.nama, divisi: divRow.nama },
   });
 
   revalidatePath("/admin/penerima");
   revalidatePath("/admin/surat/baru");
+  revalidatePath("/admin/divisi");
   return { ok: true };
 }
 
@@ -61,13 +81,39 @@ export async function updatePenerimaAction(
   input: {
     nama: string;
     jabatan: string;
-    divisi: string;
+    divisiId: string;
     noWa: string;
     isActive: boolean;
   }
 ): Promise<ActionResult> {
   const admin = await requireAdmin();
-  const parsed = penerimaSchema.safeParse(input);
+  const db = createSupabaseAdmin();
+
+  const { data: existing } = await db
+    .from("penerima")
+    .select("id, divisi_id")
+    .eq("id", id)
+    .single();
+
+  if (!existing) {
+    return { ok: false, error: "Data penerima tidak ditemukan." };
+  }
+
+  if (!isSuperadmin(admin) && existing.divisi_id !== admin.divisiId) {
+    return {
+      ok: false,
+      error: "Anda hanya dapat mengubah penerima di divisi Anda sendiri.",
+    };
+  }
+
+  const targetDivisiId = isSuperadmin(admin)
+    ? input.divisiId
+    : admin.divisiId || "";
+
+  const parsed = penerimaSchema.safeParse({
+    ...input,
+    divisiId: targetDivisiId,
+  });
   if (!parsed.success) {
     return {
       ok: false,
@@ -75,13 +121,23 @@ export async function updatePenerimaAction(
     };
   }
 
-  const db = createSupabaseAdmin();
+  const { data: divRow } = await db
+    .from("divisi")
+    .select("id, nama")
+    .eq("id", parsed.data.divisiId)
+    .single();
+
+  if (!divRow) {
+    return { ok: false, error: "Divisi yang dipilih tidak ditemukan." };
+  }
+
   const { data: updated, error } = await db
     .from("penerima")
     .update({
       nama: parsed.data.nama,
       jabatan: parsed.data.jabatan,
-      divisi: parsed.data.divisi,
+      divisi: divRow.nama,
+      divisi_id: divRow.id,
       no_wa: parsed.data.noWa,
       is_active: parsed.data.isActive,
       updated_at: new Date().toISOString(),
@@ -97,12 +153,14 @@ export async function updatePenerimaAction(
   await logAudit({
     actorId: admin.id,
     actorEmail: admin.email,
+    divisiId: divRow.id,
     eventType: "PENERIMA_UPDATED",
-    eventData: { penerimaId: updated.id, nama: updated.nama },
+    eventData: { penerimaId: updated.id, nama: updated.nama, divisi: divRow.nama },
   });
 
   revalidatePath("/admin/penerima");
   revalidatePath("/admin/surat/baru");
+  revalidatePath("/admin/divisi");
   return { ok: true };
 }
 
@@ -112,6 +170,20 @@ export async function togglePenerimaActiveAction(
 ): Promise<ActionResult> {
   const admin = await requireAdmin();
   const db = createSupabaseAdmin();
+
+  const { data: existing } = await db
+    .from("penerima")
+    .select("id, divisi_id")
+    .eq("id", id)
+    .single();
+
+  if (!existing) return { ok: false, error: "Penerima tidak ditemukan." };
+  if (!isSuperadmin(admin) && existing.divisi_id !== admin.divisiId) {
+    return {
+      ok: false,
+      error: "Anda hanya dapat mengubah penerima di divisi Anda sendiri.",
+    };
+  }
 
   const { error } = await db
     .from("penerima")
@@ -125,6 +197,7 @@ export async function togglePenerimaActiveAction(
   await logAudit({
     actorId: admin.id,
     actorEmail: admin.email,
+    divisiId: existing.divisi_id,
     eventType: "PENERIMA_UPDATED",
     eventData: { penerimaId: id, isActive },
   });
@@ -137,8 +210,22 @@ export async function togglePenerimaActiveAction(
 export async function deletePenerimaAction(id: string): Promise<ActionResult> {
   const admin = await requireAdmin();
   const db = createSupabaseAdmin();
-  const now = new Date().toISOString();
 
+  const { data: existing } = await db
+    .from("penerima")
+    .select("id, divisi_id")
+    .eq("id", id)
+    .single();
+
+  if (!existing) return { ok: false, error: "Penerima tidak ditemukan." };
+  if (!isSuperadmin(admin) && existing.divisi_id !== admin.divisiId) {
+    return {
+      ok: false,
+      error: "Anda hanya dapat menghapus penerima di divisi Anda sendiri.",
+    };
+  }
+
+  const now = new Date().toISOString();
   const { error } = await db
     .from("penerima")
     .update({ deleted_at: now, is_active: false, updated_at: now })
@@ -151,11 +238,13 @@ export async function deletePenerimaAction(id: string): Promise<ActionResult> {
   await logAudit({
     actorId: admin.id,
     actorEmail: admin.email,
+    divisiId: existing.divisi_id,
     eventType: "PENERIMA_DELETED",
     eventData: { penerimaId: id },
   });
 
   revalidatePath("/admin/penerima");
   revalidatePath("/admin/surat/baru");
+  revalidatePath("/admin/divisi");
   return { ok: true };
 }

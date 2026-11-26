@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
-import { requireAdmin } from "@/lib/auth";
+import { canManageSurat, isSuperadmin, requireAdmin } from "@/lib/auth";
 import { getTokenTtlDays } from "@/lib/env";
 import {
   deleteSuratFile,
@@ -30,6 +30,7 @@ export interface CreatedRecipientDispatch {
   disposisiId: string;
   namaPenerima: string;
   jabatan: string;
+  divisiNama: string;
   noWa: string;
   waStatus: string;
   waMeUrl: string;
@@ -61,7 +62,21 @@ export async function createSuratDisposisiAction(
     .map((v) => String(v))
     .filter(Boolean);
 
+  // Admin Divisi is locked to their own division; Superadmin picks sender division
+  const resolvedDivisiId = isSuperadmin(admin)
+    ? String(formData.get("divisiId") || "")
+    : admin.divisiId || "";
+
+  if (!resolvedDivisiId) {
+    return {
+      ok: false,
+      error:
+        "Akun Anda belum terhubung ke divisi mana pun. Hubungi Superadmin untuk mengatur divisi akun Anda.",
+    };
+  }
+
   const parsed = createSuratSchema.safeParse({
+    divisiId: resolvedDivisiId,
     perihal: formData.get("perihal"),
     pengirim: formData.get("pengirim"),
     nomorSurat: formData.get("nomorSurat") || undefined,
@@ -80,15 +95,18 @@ export async function createSuratDisposisiAction(
 
   const db = createSupabaseAdmin();
 
-  // Verify selected recipients are active and not deleted
   const { data: recipients, error: recError } = await db
     .from("penerima")
-    .select("id, nama, jabatan, no_wa")
+    .select("id, nama, jabatan, divisi, no_wa, divisi_rel:divisi(nama)")
     .in("id", parsed.data.penerimaIds)
     .eq("is_active", true)
     .is("deleted_at", null);
 
-  if (recError || !recipients || recipients.length !== parsed.data.penerimaIds.length) {
+  if (
+    recError ||
+    !recipients ||
+    recipients.length !== parsed.data.penerimaIds.length
+  ) {
     return {
       ok: false,
       error: "Sebagian penerima yang dipilih tidak valid atau sudah nonaktif.",
@@ -118,8 +136,15 @@ export async function createSuratDisposisiAction(
   const expiresAt = computeTokenExpiry(getTokenTtlDays());
   const recipientTokens = recipients.map((r) => {
     const rawToken = generateRawToken();
+    const divRel = Array.isArray(r.divisi_rel) ? r.divisi_rel[0] : r.divisi_rel;
     return {
-      recipient: r,
+      recipient: {
+        id: r.id,
+        nama: r.nama,
+        jabatan: r.jabatan,
+        no_wa: r.no_wa,
+        divisiNama: divRel?.nama || r.divisi || "-",
+      },
       rawToken,
       tokenHash: hashToken(rawToken),
     };
@@ -129,10 +154,10 @@ export async function createSuratDisposisiAction(
     ? parsed.data.batasTindakLanjut.toISOString().slice(0, 10)
     : null;
 
-  // Atomic Postgres RPC: generates kode_arsip, inserts surat, all disposisi, and SURAT_CREATED audit log
   const { data: rpcResult, error: rpcError } = await db.rpc(
     "create_surat_with_disposisi",
     {
+      p_divisi_id: parsed.data.divisiId,
       p_perihal: parsed.data.perihal,
       p_pengirim: parsed.data.pengirim,
       p_nomor_surat: parsed.data.nomorSurat,
@@ -160,7 +185,7 @@ export async function createSuratDisposisiAction(
     return {
       ok: false,
       error:
-        "Transaksi penyimpanan surat gagal. Tidak ada kode arsip atau disposisi parsial yang dibuat.",
+        "Penyimpanan surat gagal. Tidak ada kode arsip atau disposisi parsial yang dibuat.",
     };
   }
 
@@ -222,6 +247,7 @@ export async function createSuratDisposisiAction(
       await logAudit({
         actorId: admin.id,
         actorEmail: admin.email,
+        divisiId: parsed.data.divisiId,
         suratId: created.surat_id,
         disposisiId,
         eventType: "WA_ATTEMPT",
@@ -237,6 +263,7 @@ export async function createSuratDisposisiAction(
       disposisiId,
       namaPenerima: item.recipient.nama,
       jabatan: item.recipient.jabatan,
+      divisiNama: item.recipient.divisiNama,
       noWa: item.recipient.no_wa,
       waStatus: nextWaStatus,
       waMeUrl: waResult.waMeUrl,
@@ -257,23 +284,53 @@ export async function createSuratDisposisiAction(
   };
 }
 
+async function fetchDisposisiWithOwnerCheck(disposisiId: string) {
+  const admin = await requireAdmin();
+  const db = createSupabaseAdmin();
+
+  const { data: disp } = await db
+    .from("disposisi")
+    .select(
+      "id, surat_id, catatan, token_version, revoked_at, token_expires_at, surat(divisi_id, kode_arsip, perihal, pengirim, is_segera, batas_tindak_lanjut), penerima(nama, no_wa)"
+    )
+    .eq("id", disposisiId)
+    .single();
+
+  if (!disp) {
+    return { error: "Disposisi tidak ditemukan." as const };
+  }
+
+  const suratObj = Array.isArray(disp.surat) ? disp.surat[0] : disp.surat;
+  const penerimaObj = Array.isArray(disp.penerima)
+    ? disp.penerima[0]
+    : disp.penerima;
+
+  if (!suratObj || !penerimaObj) {
+    return { error: "Data surat atau penerima tidak ditemukan." as const };
+  }
+
+  if (!canManageSurat(admin, suratObj.divisi_id)) {
+    return {
+      error:
+        "Hanya divisi pengirim atau Superadmin yang dapat mengubah tautan surat ini." as const,
+    };
+  }
+
+  return { admin, db, disp, suratObj, penerimaObj };
+}
+
 export async function markWaManualSentAction(
   disposisiId: string
 ): Promise<{ ok: boolean; error?: string }> {
-  const admin = await requireAdmin();
   const parsed = disposisiActionSchema.safeParse({ disposisiId });
   if (!parsed.success) return { ok: false, error: "ID disposisi tidak valid." };
 
-  const db = createSupabaseAdmin();
-  const { data: disp } = await db
-    .from("disposisi")
-    .select("id, surat_id")
-    .eq("id", parsed.data.disposisiId)
-    .single();
+  const check = await fetchDisposisiWithOwnerCheck(parsed.data.disposisiId);
+  if ("error" in check) return { ok: false, error: check.error };
 
-  if (!disp) return { ok: false, error: "Disposisi tidak ditemukan." };
-
+  const { admin, db, disp, suratObj } = check;
   const nowIso = new Date().toISOString();
+
   await db
     .from("disposisi")
     .update({
@@ -295,6 +352,7 @@ export async function markWaManualSentAction(
   await logAudit({
     actorId: admin.id,
     actorEmail: admin.email,
+    divisiId: suratObj.divisi_id,
     suratId: disp.surat_id,
     disposisiId: disp.id,
     eventType: "WA_MANUAL_MARKED_SENT",
@@ -310,20 +368,15 @@ export async function markWaManualSentAction(
 export async function revokeTokenAction(
   disposisiId: string
 ): Promise<{ ok: boolean; error?: string }> {
-  const admin = await requireAdmin();
   const parsed = disposisiActionSchema.safeParse({ disposisiId });
   if (!parsed.success) return { ok: false, error: "ID disposisi tidak valid." };
 
-  const db = createSupabaseAdmin();
-  const { data: disp } = await db
-    .from("disposisi")
-    .select("id, surat_id, token_version")
-    .eq("id", parsed.data.disposisiId)
-    .single();
+  const check = await fetchDisposisiWithOwnerCheck(parsed.data.disposisiId);
+  if ("error" in check) return { ok: false, error: check.error };
 
-  if (!disp) return { ok: false, error: "Disposisi tidak ditemukan." };
-
+  const { admin, db, disp, suratObj } = check;
   const nowIso = new Date().toISOString();
+
   await db
     .from("disposisi")
     .update({ revoked_at: nowIso, updated_at: nowIso })
@@ -332,6 +385,7 @@ export async function revokeTokenAction(
   await logAudit({
     actorId: admin.id,
     actorEmail: admin.email,
+    divisiId: suratObj.divisi_id,
     suratId: disp.surat_id,
     disposisiId: disp.id,
     eventType: "TOKEN_REVOKED",
@@ -348,7 +402,6 @@ export async function extendTokenAction(
   disposisiId: string,
   extraDays: number
 ): Promise<{ ok: boolean; error?: string; newExpiresAt?: string }> {
-  const admin = await requireAdmin();
   const parsed = extendTokenSchema.safeParse({ disposisiId, extraDays });
   if (!parsed.success) {
     return {
@@ -357,19 +410,15 @@ export async function extendTokenAction(
     };
   }
 
-  const db = createSupabaseAdmin();
-  const { data: disp } = await db
-    .from("disposisi")
-    .select("id, surat_id, revoked_at, token_expires_at")
-    .eq("id", parsed.data.disposisiId)
-    .single();
+  const check = await fetchDisposisiWithOwnerCheck(parsed.data.disposisiId);
+  if ("error" in check) return { ok: false, error: check.error };
 
-  if (!disp) return { ok: false, error: "Disposisi tidak ditemukan." };
+  const { admin, db, disp, suratObj } = check;
   if (disp.revoked_at) {
     return {
       ok: false,
       error:
-        "Token sudah dicabut. Gunakan aksi Terbitkan Ulang Token untuk membuat akses baru.",
+        "Tautan sudah dinonaktifkan. Gunakan tombol Buat Tautan Baru untuk membuat akses baru.",
     };
   }
 
@@ -390,6 +439,7 @@ export async function extendTokenAction(
   await logAudit({
     actorId: admin.id,
     actorEmail: admin.email,
+    divisiId: suratObj.divisi_id,
     suratId: disp.surat_id,
     disposisiId: disp.id,
     eventType: "TOKEN_EXTENDED",
@@ -413,28 +463,13 @@ export async function reissueTokenAction(disposisiId: string): Promise<{
   linkUrl?: string;
   newExpiresAt?: string;
 }> {
-  const admin = await requireAdmin();
   const parsed = disposisiActionSchema.safeParse({ disposisiId });
   if (!parsed.success) return { ok: false, error: "ID disposisi tidak valid." };
 
-  const db = createSupabaseAdmin();
-  const { data: disp } = await db
-    .from("disposisi")
-    .select(
-      "id, surat_id, catatan, token_version, surat(kode_arsip, perihal, pengirim, is_segera, batas_tindak_lanjut), penerima(nama, no_wa)"
-    )
-    .eq("id", parsed.data.disposisiId)
-    .single();
+  const check = await fetchDisposisiWithOwnerCheck(parsed.data.disposisiId);
+  if ("error" in check) return { ok: false, error: check.error };
 
-  if (!disp) return { ok: false, error: "Disposisi tidak ditemukan." };
-
-  const suratObj = Array.isArray(disp.surat) ? disp.surat[0] : disp.surat;
-  const penerimaObj = Array.isArray(disp.penerima)
-    ? disp.penerima[0]
-    : disp.penerima;
-  if (!suratObj || !penerimaObj) {
-    return { ok: false, error: "Relasi surat atau penerima tidak ditemukan." };
-  }
+  const { admin, db, disp, suratObj, penerimaObj } = check;
 
   const rawToken = generateRawToken();
   const newTokenHash = hashToken(rawToken);
@@ -458,6 +493,7 @@ export async function reissueTokenAction(disposisiId: string): Promise<{
   await logAudit({
     actorId: admin.id,
     actorEmail: admin.email,
+    divisiId: suratObj.divisi_id,
     suratId: disp.surat_id,
     disposisiId: disp.id,
     eventType: "TOKEN_REISSUED",
@@ -521,20 +557,15 @@ export async function reissueTokenAction(disposisiId: string): Promise<{
 export async function markReminderSentAction(
   disposisiId: string
 ): Promise<{ ok: boolean; error?: string }> {
-  const admin = await requireAdmin();
   const parsed = disposisiActionSchema.safeParse({ disposisiId });
   if (!parsed.success) return { ok: false, error: "ID disposisi tidak valid." };
 
-  const db = createSupabaseAdmin();
-  const { data: disp } = await db
-    .from("disposisi")
-    .select("id, surat_id")
-    .eq("id", parsed.data.disposisiId)
-    .single();
+  const check = await fetchDisposisiWithOwnerCheck(parsed.data.disposisiId);
+  if ("error" in check) return { ok: false, error: check.error };
 
-  if (!disp) return { ok: false, error: "Disposisi tidak ditemukan." };
-
+  const { admin, db, disp, suratObj } = check;
   const nowIso = new Date().toISOString();
+
   await db
     .from("disposisi")
     .update({ reminder_sent_at: nowIso, updated_at: nowIso })
@@ -543,6 +574,7 @@ export async function markReminderSentAction(
   await logAudit({
     actorId: admin.id,
     actorEmail: admin.email,
+    divisiId: suratObj.divisi_id,
     suratId: disp.surat_id,
     disposisiId: disp.id,
     eventType: "REMINDER_SENT",

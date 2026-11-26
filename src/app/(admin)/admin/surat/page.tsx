@@ -8,15 +8,19 @@ import {
   ChevronLeft,
   ChevronRight,
   Flame,
+  ArrowUpRight,
+  ArrowDownLeft,
+  Building2,
 } from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { SegeraBadge, WaStatusBadge } from "@/components/ui/StatusBadge";
+import { isSuperadmin, requireAdmin } from "@/lib/auth";
 import { formatTanggalWaktuIndo } from "@/lib/format";
 import { createSupabaseAdmin } from "@/lib/supabase/server";
 
 export const metadata = {
-  title: "Monitoring Surat & Disposisi — SIDISPO",
+  title: "Daftar Surat — SIDISPO",
 };
 
 const PAGE_SIZE = 12;
@@ -26,27 +30,57 @@ export default async function MonitoringSuratPage({
 }: {
   searchParams: Promise<{
     q?: string;
+    box?: string;
+    divisi?: string;
     status?: string;
     segera?: string;
     page?: string;
   }>;
 }) {
+  const admin = await requireAdmin();
+  const isSuper = isSuperadmin(admin);
+
   const sp = await searchParams;
   const q = (sp.q || "").trim();
+  const box = !isSuper && sp.box === "masuk" ? "masuk" : "keluar";
+  const divisiFilter = isSuper ? sp.divisi || "" : "";
   const statusFilter = sp.status || "all";
   const segeraOnly = sp.segera === "1";
   const currentPage = Math.max(1, Number.parseInt(sp.page || "1", 10) || 1);
 
   const db = createSupabaseAdmin();
+
+  const divisiRes = isSuper
+    ? await db
+        .from("divisi")
+        .select("id, nama, kode")
+        .eq("is_active", true)
+        .order("nama", { ascending: true })
+    : { data: [] };
+
   let query = db
     .from("surat")
     .select(
-      "id, kode_arsip, perihal, pengirim, nomor_surat, is_segera, created_at, disposisi(id, status, wa_status, penerima(nama))"
+      "id, divisi_id, kode_arsip, perihal, pengirim, nomor_surat, is_segera, created_at, divisi(nama, kode), disposisi(id, status, wa_status, penerima(nama, divisi_id))"
     )
     .order("created_at", { ascending: false });
 
+  if (isSuper) {
+    if (divisiFilter) {
+      query = query.eq("divisi_id", divisiFilter);
+    }
+  } else if (box === "keluar") {
+    if (admin.divisiId) {
+      query = query.eq("divisi_id", admin.divisiId);
+    } else {
+      query = query.eq("id", "00000000-0000-0000-0000-000000000000");
+    }
+  } else if (admin.divisiId) {
+    // Surat Masuk: created by OTHER divisions, directed to recipients in admin's division
+    query = query.neq("divisi_id", admin.divisiId);
+  }
+
   if (q) {
-    // Strip PostgREST special filter characters for safe ilike pattern
     const safeQ = q.replace(/[%_,()]/g, "");
     if (safeQ) {
       query = query.or(
@@ -62,7 +96,24 @@ export default async function MonitoringSuratPage({
   const { data: rawRows } = await query.limit(500);
 
   const allItems = (rawRows ?? []).filter((surat) => {
-    const disps = (surat.disposisi ?? []) as Array<{ status: string }>;
+    const disps = (surat.disposisi ?? []) as Array<{
+      status: string;
+      penerima:
+        | { nama: string; divisi_id: string | null }
+        | Array<{ nama: string; divisi_id: string | null }>
+        | null;
+    }>;
+
+    // For Surat Masuk, keep only letters that actually have a recipient in admin's division
+    if (!isSuper && box === "masuk") {
+      if (!admin.divisiId) return false;
+      const targetsMyDiv = disps.some((d) => {
+        const p = Array.isArray(d.penerima) ? d.penerima[0] : d.penerima;
+        return p?.divisi_id === admin.divisiId;
+      });
+      if (!targetsMyDiv) return false;
+    }
+
     if (statusFilter === "pending") {
       return disps.some((d) => d.status === "BELUM_DIKONFIRMASI");
     }
@@ -86,6 +137,8 @@ export default async function MonitoringSuratPage({
     const params = new URLSearchParams();
     const merged = {
       q: q || undefined,
+      box: !isSuper && box === "masuk" ? "masuk" : undefined,
+      divisi: isSuper && divisiFilter ? divisiFilter : undefined,
       status: statusFilter !== "all" ? statusFilter : undefined,
       segera: segeraOnly ? "1" : undefined,
       page: undefined,
@@ -103,24 +156,57 @@ export default async function MonitoringSuratPage({
       <SectionHeader
         badge="Monitoring & Arsip Surat"
         badgeIcon={<Mail className="w-3.5 h-3.5 text-slate-700" />}
-        title="Monitoring Surat & Disposisi"
-        description="Cari berdasarkan kode arsip, perihal, pengirim, atau nomor surat, lalu pantau status WhatsApp dan konfirmasi tiap penerima."
+        title="Daftar Surat & Disposisi"
+        description={
+          isSuper
+            ? "Pantau seluruh surat dari semua divisi, cari berdasarkan kode arsip atau perihal, dan cek status konfirmasi."
+            : "Kelola Surat Keluar dari divisi Anda dan pantau Surat Masuk dari divisi lain yang ditujukan ke anggota divisi Anda."
+        }
         actions={
           <Link
             href="/admin/surat/baru"
             className="px-5 py-3 bg-slate-950 hover:bg-black text-white font-extrabold rounded-2xl text-xs shadow-xs hover:shadow-md flex items-center gap-2 transition-all border border-slate-800"
           >
             <Plus className="w-4 h-4 text-amber-400" />
-            <span>Input Surat Baru</span>
+            <span>Catat Surat Baru</span>
           </Link>
         }
       />
 
+      {/* Surat Keluar / Surat Masuk Tabs for Admin Divisi */}
+      {!isSuper && (
+        <div className="inline-flex bg-white p-1.5 rounded-2xl border border-slate-200/90 shadow-2xs gap-1.5">
+          <Link
+            href={buildUrl({ box: undefined, page: "1" })}
+            className={`px-5 py-2.5 rounded-xl text-xs font-extrabold flex items-center gap-2 transition-all ${
+              box === "keluar"
+                ? "bg-slate-950 text-white shadow-xs"
+                : "text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            <ArrowUpRight className="w-4 h-4 text-amber-400" />
+            <span>Surat Keluar ({admin.divisiNama || "Divisi Saya"})</span>
+          </Link>
+          <Link
+            href={buildUrl({ box: "masuk", page: "1" })}
+            className={`px-5 py-2.5 rounded-xl text-xs font-extrabold flex items-center gap-2 transition-all ${
+              box === "masuk"
+                ? "bg-slate-950 text-white shadow-xs"
+                : "text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            <ArrowDownLeft className="w-4 h-4 text-emerald-400" />
+            <span>Surat Masuk (Dari Divisi Lain)</span>
+          </Link>
+        </div>
+      )}
+
+      {/* Filter Bar */}
       <div className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/90 shadow-2xs space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
           <div className="flex flex-wrap items-center gap-1.5 text-xs font-bold">
             {[
-              { id: "all", label: "Semua Surat" },
+              { id: "all", label: "Semua Status" },
               { id: "pending", label: "Belum Lengkap Konfirmasi" },
               { id: "confirmed", label: "Semua Dikonfirmasi" },
             ].map((tab) => (
@@ -141,7 +227,10 @@ export default async function MonitoringSuratPage({
             ))}
 
             <Link
-              href={buildUrl({ segera: segeraOnly ? undefined : "1", page: "1" })}
+              href={buildUrl({
+                segera: segeraOnly ? undefined : "1",
+                page: "1",
+              })}
               className={`px-4 py-2 rounded-xl transition-all flex items-center gap-1.5 ${
                 segeraOnly
                   ? "bg-amber-500 text-slate-950 font-extrabold shadow-xs"
@@ -154,18 +243,40 @@ export default async function MonitoringSuratPage({
           </div>
         </div>
 
-        <form action="/admin/surat" method="get" className="flex gap-2">
+        <form action="/admin/surat" method="get" className="flex flex-wrap gap-2">
+          {!isSuper && box === "masuk" && (
+            <input type="hidden" name="box" value="masuk" />
+          )}
           {statusFilter !== "all" && (
             <input type="hidden" name="status" value={statusFilter} />
           )}
           {segeraOnly && <input type="hidden" name="segera" value="1" />}
-          <div className="relative flex-1">
+
+          {isSuper && (
+            <div className="relative flex items-center">
+              <Building2 className="w-4 h-4 text-slate-400 absolute left-3.5 pointer-events-none" />
+              <select
+                name="divisi"
+                defaultValue={divisiFilter}
+                className="bg-slate-50 border border-slate-200 rounded-2xl pl-9 pr-6 py-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-slate-950"
+              >
+                <option value="">Semua Divisi Pencatat</option>
+                {(divisiRes.data ?? []).map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.nama} ({d.kode})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="relative flex-1 min-w-[220px]">
             <Search className="w-4 h-4 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               name="q"
               defaultValue={q}
-              placeholder="Cari kode arsip (STP/DSP/...), perihal, pengirim, atau nomor surat..."
+              placeholder="Cari kode arsip, perihal, pengirim, atau nomor surat..."
               className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-11 pr-4 py-3 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-slate-950 focus:ring-2 focus:ring-slate-950/10"
             />
           </div>
@@ -181,16 +292,20 @@ export default async function MonitoringSuratPage({
       {items.length === 0 ? (
         <EmptyState
           icon={<Mail className="w-6 h-6" />}
-          title="Data Surat Tidak Ditemukan"
-          description="Tidak ada surat yang cocok dengan filter atau kata kunci pencarian saat ini."
+          title="Belum Ada Surat"
+          description={
+            !isSuper && box === "masuk"
+              ? "Belum ada surat dari divisi lain yang ditujukan ke anggota divisi Anda."
+              : "Tidak ada surat yang cocok dengan filter atau kata kunci pencarian saat ini."
+          }
         />
       ) : (
         <div className="bg-white rounded-3xl border border-slate-200/90 shadow-xs overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-slate-700 min-w-[820px]">
+            <table className="w-full text-left text-xs text-slate-700 min-w-[840px]">
               <thead className="bg-slate-50/80 border-b border-slate-200 text-slate-500 uppercase text-[11px] font-extrabold tracking-wider">
                 <tr>
-                  <th className="py-4 px-6">Kode Arsip & Waktu</th>
+                  <th className="py-4 px-6">Kode Arsip & Divisi</th>
                   <th className="py-4 px-6">Perihal & Pengirim</th>
                   <th className="py-4 px-6">Penerima</th>
                   <th className="py-4 px-6">Status WA</th>
@@ -200,6 +315,9 @@ export default async function MonitoringSuratPage({
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {items.map((surat) => {
+                  const divObj = Array.isArray(surat.divisi)
+                    ? surat.divisi[0]
+                    : surat.divisi;
                   const disps = (surat.disposisi ?? []) as Array<{
                     id: string;
                     status: string;
@@ -245,8 +363,11 @@ export default async function MonitoringSuratPage({
                           </span>
                           {surat.is_segera && <SegeraBadge />}
                         </div>
-                        <p className="text-[11px] text-slate-400 mt-1">
-                          {formatTanggalWaktuIndo(surat.created_at)}
+                        <p className="text-[11px] text-slate-500 font-semibold mt-0.5">
+                          {divObj?.nama || "-"} •{" "}
+                          <span className="text-slate-400 font-normal">
+                            {formatTanggalWaktuIndo(surat.created_at)}
+                          </span>
                         </p>
                       </td>
 

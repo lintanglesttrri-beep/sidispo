@@ -48,6 +48,7 @@ import {
 export interface SuratDetailData {
   id: string;
   kodeArsip: string;
+  divisiNama: string;
   perihal: string;
   pengirim: string;
   nomorSurat: string | null;
@@ -58,6 +59,7 @@ export interface SuratDetailData {
   batasTindakLanjut: string | null;
   createdAt: string;
   createdByNama: string;
+  canManage: boolean;
   disposisi: Array<{
     id: string;
     penerimaNama: string;
@@ -229,6 +231,9 @@ export function SuratDetailClient({ surat }: { surat: SuratDetailData }) {
             <span className="font-mono text-sm font-black bg-amber-500 text-slate-950 px-3 py-1 rounded-xl">
               {surat.kodeArsip}
             </span>
+            <span className="text-xs font-extrabold bg-white/10 text-slate-200 border border-white/15 px-3 py-1 rounded-xl">
+              Divisi {surat.divisiNama}
+            </span>
             {surat.isSegera && <SegeraBadge />}
           </div>
           <span className="text-xs text-slate-400 font-medium">
@@ -284,6 +289,15 @@ export function SuratDetailClient({ surat }: { surat: SuratDetailData }) {
         </div>
       </div>
 
+      {!surat.canManage && (
+        <div className="p-4 rounded-2xl bg-sky-50 border border-sky-200 text-xs font-semibold text-sky-900">
+          <strong>Surat Masuk (Mode Lihat Saja):</strong> Surat ini dicatat oleh{" "}
+          <strong>Divisi {surat.divisiNama}</strong>. Hanya divisi pengirim atau
+          Superadmin yang dapat memperpanjang, membuat ulang, atau menonaktifkan
+          tautan.
+        </div>
+      )}
+
       {/* Daftar Penerima & Kontrol Token (ADM-07, 08, 09, 10, 12) */}
       <div className="bg-white rounded-3xl border border-slate-200/90 shadow-xs overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
@@ -328,7 +342,8 @@ export function SuratDetailClient({ surat }: { surat: SuratDetailData }) {
                   )}
                 </div>
 
-                {/* Per-recipient Actions */}
+                {/* Per-recipient Actions (Owner division & Superadmin only) */}
+                {surat.canManage && (
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
                   {d.waStatus === "PENDING" || d.waStatus === "FAILED" ? (
                     <button
@@ -395,6 +410,7 @@ export function SuratDetailClient({ surat }: { surat: SuratDetailData }) {
                     </button>
                   )}
                 </div>
+                )}
               </div>
 
               {/* 4 Main Timestamps (PRD §7.1) */}

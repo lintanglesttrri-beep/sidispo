@@ -1,11 +1,25 @@
+export type AdminRole = "SUPERADMIN" | "ADMIN_DIVISI";
 export type DisposisiStatus = "BELUM_DIKONFIRMASI" | "SUDAH_DIKONFIRMASI";
 export type WaStatus = "PENDING" | "SENT" | "FAILED" | "DIKIRIM_MANUAL";
+
+export interface DivisiRow {
+  id: string;
+  nama: string;
+  kode: string;
+  kontak_nama: string;
+  kontak_wa: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface ProfileRow {
   id: string;
   nama: string;
   email: string;
-  role: string;
+  role: AdminRole;
+  divisi_id: string | null;
+  is_active: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -15,6 +29,7 @@ export interface PenerimaDbRow {
   nama: string;
   jabatan: string;
   divisi: string;
+  divisi_id: string | null;
   no_wa: string;
   is_active: boolean;
   deleted_at: string | null;
@@ -24,6 +39,7 @@ export interface PenerimaDbRow {
 
 export interface SuratDbRow {
   id: string;
+  divisi_id: string;
   kode_arsip: string;
   perihal: string;
   pengirim: string;
@@ -63,6 +79,7 @@ export interface AuditLogDbRow {
   id: string;
   actor_id: string | null;
   actor_email: string | null;
+  divisi_id: string | null;
   surat_id: string | null;
   disposisi_id: string | null;
   event_type: string;

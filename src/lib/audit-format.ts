@@ -18,6 +18,11 @@ export const AUDIT_EVENT_LABELS: Record<string, string> = {
   PENERIMA_CREATED: "Penerima baru ditambahkan",
   PENERIMA_UPDATED: "Data penerima diperbarui",
   PENERIMA_DELETED: "Penerima dihapus dari daftar",
+  DIVISI_CREATED: "Divisi baru ditambahkan",
+  DIVISI_UPDATED: "Data divisi diperbarui",
+  ADMIN_ACCOUNT_CREATED: "Akun admin baru dibuat",
+  ADMIN_ACCOUNT_UPDATED: "Akun admin diperbarui",
+  ADMIN_ACCOUNT_DEACTIVATED: "Akun admin dinonaktifkan",
   ADMIN_LOGIN: "Admin masuk ke sistem",
   ADMIN_LOGOUT: "Admin keluar dari sistem",
 };
@@ -49,9 +54,11 @@ export function formatAuditSummary(
     case "SURAT_CREATED": {
       const jumlah = data.jumlahPenerima ? `${data.jumlahPenerima} penerima` : "";
       const segera = data.isSegera ? " • Sifat Segera" : "";
-      return [data.perihal ? `Perihal: ${String(data.perihal)}` : "", jumlah]
-        .filter(Boolean)
-        .join(" • ") + segera;
+      return (
+        [data.perihal ? `Perihal: ${String(data.perihal)}` : "", jumlah]
+          .filter(Boolean)
+          .join(" • ") + segera
+      );
     }
     case "TOKEN_EXTENDED": {
       const days = data.extraDays ? `+${String(data.extraDays)} hari` : "";
@@ -84,6 +91,17 @@ export function formatAuditSummary(
       return data.nama ? `Penerima: ${String(data.nama)}` : "Data penerima diperbarui";
     case "PENERIMA_DELETED":
       return "Penerima disembunyikan dari daftar aktif";
+    case "DIVISI_CREATED":
+    case "DIVISI_UPDATED":
+      return data.nama
+        ? `Divisi: ${String(data.nama)}${data.kode ? ` (${String(data.kode)})` : ""}`
+        : "Data divisi diperbarui";
+    case "ADMIN_ACCOUNT_CREATED":
+    case "ADMIN_ACCOUNT_UPDATED":
+    case "ADMIN_ACCOUNT_DEACTIVATED":
+      return data.email
+        ? `Akun: ${String(data.email)}${data.role ? ` (${String(data.role)})` : ""}`
+        : "Perubahan akun admin";
     case "ADMIN_LOGIN":
       return "Masuk ke panel admin";
     case "ADMIN_LOGOUT":
