@@ -5,6 +5,7 @@ import {
   UserCog,
   Plus,
   Pencil,
+  Trash2,
   ShieldCheck,
   CheckCircle2,
   XCircle,
@@ -20,6 +21,7 @@ import { SectionHeader } from "@/components/ui/SectionHeader";
 import type { AdminRole } from "@/lib/types";
 import {
   createAdminAccountAction,
+  deleteAdminAccountAction,
   updateAdminAccountAction,
 } from "./actions";
 
@@ -51,9 +53,11 @@ export function AkunClient({
 }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<AkunItem | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AkunItem | null>(null);
   const [showPwd, setShowPwd] = useState(false);
+  const [showEditPwd, setShowEditPwd] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ type: "ok" | "error"; text: string } | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const [createForm, setCreateForm] = useState({
@@ -71,6 +75,7 @@ export function AkunClient({
     role: "ADMIN_DIVISI" as AdminRole,
     divisiId: "",
     isActive: true,
+    newPassword: "",
   });
 
   const openCreate = () => {
@@ -90,12 +95,14 @@ export function AkunClient({
   const openEdit = (row: AkunItem) => {
     setError(null);
     setEditing(row);
+    setShowEditPwd(false);
     setEditForm({
       id: row.id,
       nama: row.nama,
       role: row.role,
       divisiId: row.divisiId || divisiList[0]?.id || "",
       isActive: row.isActive,
+      newPassword: "",
     });
   };
 
@@ -109,7 +116,10 @@ export function AkunClient({
         setError(res.error || "Gagal membuat akun.");
         return;
       }
-      setNotice(res.message || "Akun admin berhasil dibuat.");
+      setNotice({
+        type: "ok",
+        text: res.message || "Akun admin berhasil dibuat.",
+      });
       setCreateOpen(false);
     });
   };
@@ -124,8 +134,30 @@ export function AkunClient({
         setError(res.error || "Gagal memperbarui akun.");
         return;
       }
-      setNotice("Perubahan akun admin berhasil disimpan.");
+      setNotice({
+        type: "ok",
+        text: editForm.newPassword
+          ? "Perubahan akun & password baru berhasil disimpan."
+          : "Perubahan akun admin berhasil disimpan.",
+      });
       setEditing(null);
+    });
+  };
+
+  const handleDelete = () => {
+    if (!deleteTarget) return;
+    setNotice(null);
+    startTransition(async () => {
+      const res = await deleteAdminAccountAction(deleteTarget.id);
+      setDeleteTarget(null);
+      if (!res.ok) {
+        setNotice({ type: "error", text: res.error || "Gagal menghapus akun." });
+        return;
+      }
+      setNotice({
+        type: "ok",
+        text: res.message || "Akun admin berhasil dihapus.",
+      });
     });
   };
 
@@ -149,9 +181,19 @@ export function AkunClient({
       />
 
       {notice && (
-        <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-800 flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 shrink-0" />
-          <span>{notice}</span>
+        <div
+          className={`p-4 rounded-2xl border text-xs font-bold flex items-center gap-2 ${
+            notice.type === "ok"
+              ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+              : "bg-rose-50 border-rose-200 text-rose-800"
+          }`}
+        >
+          {notice.type === "ok" ? (
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+          ) : (
+            <AlertCircle className="w-4 h-4 shrink-0" />
+          )}
+          <span>{notice.text}</span>
         </div>
       )}
 
@@ -234,15 +276,27 @@ export function AkunClient({
                         </span>
                       )}
                     </td>
-                    <td className="py-4 px-6 text-right">
-                      <button
-                        type="button"
-                        onClick={() => openEdit(row)}
-                        className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-950 text-slate-800 hover:text-white font-bold inline-flex items-center gap-1.5 transition-all cursor-pointer"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                        <span>Atur</span>
-                      </button>
+                    <td className="py-4 px-6 text-right whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => openEdit(row)}
+                          className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-950 text-slate-800 hover:text-white font-bold inline-flex items-center gap-1.5 transition-all cursor-pointer"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                          <span>Atur</span>
+                        </button>
+                        {row.id !== currentAdminId && (
+                          <button
+                            type="button"
+                            onClick={() => setDeleteTarget(row)}
+                            className="p-1.5 rounded-xl bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white transition-all cursor-pointer"
+                            title="Hapus akun admin"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -513,6 +567,39 @@ export function AkunClient({
             )}
           </div>
 
+          <div>
+            <label className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5">
+              Reset Password{" "}
+              <span className="text-slate-400 font-normal normal-case">
+                (Opsional — kosongkan jika tidak diubah)
+              </span>
+            </label>
+            <div className="relative">
+              <input
+                type={showEditPwd ? "text" : "password"}
+                minLength={8}
+                value={editForm.newPassword}
+                onChange={(e) =>
+                  setEditForm({ ...editForm, newPassword: e.target.value })
+                }
+                placeholder="Isi password baru minimal 8 karakter"
+                className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-4 pr-11 py-3 text-sm text-slate-900"
+              />
+              <button
+                type="button"
+                onClick={() => setShowEditPwd((p) => !p)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-slate-800 cursor-pointer"
+                aria-label="Lihat password baru"
+              >
+                {showEditPwd ? (
+                  <EyeOff className="w-4 h-4" />
+                ) : (
+                  <Eye className="w-4 h-4" />
+                )}
+              </button>
+            </div>
+          </div>
+
           {editForm.id !== currentAdminId && (
             <label className="flex items-center gap-2.5 p-3.5 rounded-2xl bg-slate-50 border border-slate-200 cursor-pointer">
               <input
@@ -552,6 +639,43 @@ export function AkunClient({
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Delete Admin Account Modal */}
+      <Modal
+        open={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        title="Hapus Akun Admin?"
+        subtitle={deleteTarget?.email || ""}
+        icon={<Trash2 className="w-5 h-5" />}
+        maxWidthClass="max-w-md"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-700">
+            Yakin ingin menghapus akun{" "}
+            <strong className="text-slate-950">{deleteTarget?.nama}</strong>?
+            Jika akun sudah pernah mencatat surat, gunakan opsi nonaktifkan akun
+            agar riwayat surat tetap terjaga.
+          </p>
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => setDeleteTarget(null)}
+              className="px-4 py-2.5 rounded-xl bg-slate-100 text-slate-700 font-bold text-xs cursor-pointer"
+            >
+              Batal
+            </button>
+            <button
+              type="button"
+              disabled={isPending}
+              onClick={handleDelete}
+              className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs flex items-center gap-2 cursor-pointer"
+            >
+              {isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              <span>Ya, Hapus Akun</span>
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

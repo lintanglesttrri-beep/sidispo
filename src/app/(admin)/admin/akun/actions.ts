@@ -120,6 +120,7 @@ export async function updateAdminAccountAction(input: {
   role: "SUPERADMIN" | "ADMIN_DIVISI";
   divisiId: string;
   isActive: boolean;
+  newPassword?: string;
 }): Promise<AkunActionResult> {
   const actor = await requireSuperadmin();
   const parsed = updateAdminAccountSchema.safeParse(input);
@@ -162,13 +163,28 @@ export async function updateAdminAccountAction(input: {
     return { ok: false, error: "Gagal memperbarui akun admin." };
   }
 
-  // Enforce ban/unban & revoke active sessions immediately when deactivated
-  await db.auth.admin
-    .updateUserById(updated.id, {
-      ban_duration: updated.is_active ? "none" : "876000h",
-      user_metadata: { nama: parsed.data.nama },
-    })
-    .catch(() => {});
+  const authUpdate: {
+    ban_duration: string;
+    user_metadata: { nama: string };
+    password?: string;
+  } = {
+    ban_duration: updated.is_active ? "none" : "876000h",
+    user_metadata: { nama: parsed.data.nama },
+  };
+  if (parsed.data.newPassword) {
+    authUpdate.password = parsed.data.newPassword;
+  }
+
+  const { error: authErr } = await db.auth.admin.updateUserById(
+    updated.id,
+    authUpdate
+  );
+  if (authErr && parsed.data.newPassword) {
+    return {
+      ok: false,
+      error: "Profil tersimpan, tetapi gagal memperbarui password baru.",
+    };
+  }
 
   if (!updated.is_active) {
     await db.auth.admin.signOut(updated.id, "global").catch(() => {});
@@ -185,10 +201,74 @@ export async function updateAdminAccountAction(input: {
       email: updated.email,
       role: updated.role,
       isActive: updated.is_active,
+      passwordReset: Boolean(parsed.data.newPassword),
     },
   });
 
   revalidatePath("/admin/akun");
   revalidatePath("/admin/divisi");
   return { ok: true };
+}
+
+export async function deleteAdminAccountAction(
+  id: string
+): Promise<AkunActionResult> {
+  const actor = await requireSuperadmin();
+  if (id === actor.id) {
+    return {
+      ok: false,
+      error: "Anda tidak dapat menghapus akun Anda sendiri.",
+    };
+  }
+
+  const db = createSupabaseAdmin();
+
+  const { count: suratCount } = await db
+    .from("surat")
+    .select("id", { count: "exact", head: true })
+    .eq("created_by", id);
+
+  if ((suratCount ?? 0) > 0) {
+    return {
+      ok: false,
+      error:
+        "Akun ini sudah pernah mencatat surat sehingga tidak dapat dihapus permanen. Nonaktifkan akun saja agar riwayat surat tetap aman.",
+    };
+  }
+
+  const { data: target } = await db
+    .from("profiles")
+    .select("id, email, divisi_id")
+    .eq("id", id)
+    .single();
+
+  if (!target) {
+    return { ok: false, error: "Akun tidak ditemukan." };
+  }
+
+  // Clear actor_id reference on audit_logs (actor_email still preserved)
+  await db.from("audit_logs").update({ actor_id: null }).eq("actor_id", id);
+
+  const { error: delProfileErr } = await db
+    .from("profiles")
+    .delete()
+    .eq("id", id);
+
+  if (delProfileErr) {
+    return { ok: false, error: "Gagal menghapus profil akun admin." };
+  }
+
+  await db.auth.admin.deleteUser(id).catch(() => {});
+
+  await logAudit({
+    actorId: actor.id,
+    actorEmail: actor.email,
+    divisiId: target.divisi_id,
+    eventType: "ADMIN_ACCOUNT_DEACTIVATED",
+    eventData: { email: target.email, deleted: true },
+  });
+
+  revalidatePath("/admin/akun");
+  revalidatePath("/admin/divisi");
+  return { ok: true, message: `Akun ${target.email} berhasil dihapus.` };
 }

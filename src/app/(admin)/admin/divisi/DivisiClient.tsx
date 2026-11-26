@@ -5,6 +5,7 @@ import {
   Building2,
   Plus,
   Pencil,
+  Trash2,
   Phone,
   CheckCircle2,
   XCircle,
@@ -17,6 +18,7 @@ import { Modal } from "@/components/ui/Modal";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import {
   createDivisiAction,
+  deleteDivisiAction,
   toggleDivisiActiveAction,
   updateDivisiAction,
 } from "./actions";
@@ -43,8 +45,10 @@ const emptyForm = {
 export function DivisiClient({ items }: { items: DivisiItem[] }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<DivisiItem | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DivisiItem | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ type: "ok" | "error"; text: string } | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const openCreate = () => {
@@ -83,8 +87,26 @@ export function DivisiClient({ items }: { items: DivisiItem[] }) {
   };
 
   const handleToggle = (row: DivisiItem) => {
+    setNotice(null);
     startTransition(async () => {
-      await toggleDivisiActiveAction(row.id, !row.isActive);
+      const res = await toggleDivisiActiveAction(row.id, !row.isActive);
+      if (!res.ok) {
+        setNotice({ type: "error", text: res.error || "Gagal mengubah status." });
+      }
+    });
+  };
+
+  const handleDelete = () => {
+    if (!deleteTarget) return;
+    setNotice(null);
+    startTransition(async () => {
+      const res = await deleteDivisiAction(deleteTarget.id);
+      setDeleteTarget(null);
+      if (!res.ok) {
+        setNotice({ type: "error", text: res.error || "Gagal menghapus divisi." });
+        return;
+      }
+      setNotice({ type: "ok", text: "Divisi berhasil dihapus." });
     });
   };
 
@@ -106,6 +128,24 @@ export function DivisiClient({ items }: { items: DivisiItem[] }) {
           </button>
         }
       />
+
+      {notice && (
+        <div
+          role="status"
+          className={`p-4 rounded-2xl border text-xs font-bold flex items-center gap-2 ${
+            notice.type === "ok"
+              ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+              : "bg-rose-50 border-rose-200 text-rose-800"
+          }`}
+        >
+          {notice.type === "ok" ? (
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+          ) : (
+            <AlertCircle className="w-4 h-4 shrink-0" />
+          )}
+          <span>{notice.text}</span>
+        </div>
+      )}
 
       {items.length === 0 ? (
         <EmptyState
@@ -185,14 +225,24 @@ export function DivisiClient({ items }: { items: DivisiItem[] }) {
                 <span className="text-slate-500 font-semibold">
                   {d.adminCount} admin • {d.penerimaCount} penerima
                 </span>
-                <button
-                  type="button"
-                  onClick={() => openEdit(d)}
-                  className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-950 text-slate-800 hover:text-white font-bold flex items-center gap-1.5 transition-all cursor-pointer"
-                >
-                  <Pencil className="w-3.5 h-3.5" />
-                  <span>Ubah</span>
-                </button>
+                <div className="inline-flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => openEdit(d)}
+                    className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-950 text-slate-800 hover:text-white font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                    <span>Ubah</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeleteTarget(d)}
+                    className="p-1.5 rounded-xl bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white transition-all cursor-pointer"
+                    title="Hapus divisi"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             </div>
           ))}
@@ -314,6 +364,43 @@ export function DivisiClient({ items }: { items: DivisiItem[] }) {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Delete Divisi Modal */}
+      <Modal
+        open={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        title="Hapus Divisi?"
+        subtitle={deleteTarget ? `${deleteTarget.nama} (${deleteTarget.kode})` : ""}
+        icon={<Trash2 className="w-5 h-5" />}
+        maxWidthClass="max-w-md"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-700">
+            Yakin ingin menghapus divisi{" "}
+            <strong className="text-slate-950">{deleteTarget?.nama}</strong>?
+            Divisi hanya dapat dihapus jika belum memiliki surat, admin, atau
+            penerima aktif.
+          </p>
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => setDeleteTarget(null)}
+              className="px-4 py-2.5 rounded-xl bg-slate-100 text-slate-700 font-bold text-xs cursor-pointer"
+            >
+              Batal
+            </button>
+            <button
+              type="button"
+              disabled={isPending}
+              onClick={handleDelete}
+              className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs flex items-center gap-2 cursor-pointer"
+            >
+              {isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              <span>Ya, Hapus Divisi</span>
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

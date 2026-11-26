@@ -20,6 +20,7 @@ import {
   createSuratSchema,
   disposisiActionSchema,
   extendTokenSchema,
+  updateSuratSchema,
 } from "@/lib/validators";
 import {
   buildDispositionMessage,
@@ -583,5 +584,130 @@ export async function markReminderSentAction(
 
   revalidatePath("/admin");
   revalidatePath(`/admin/surat/${disp.surat_id}`);
+  return { ok: true };
+}
+
+export async function updateSuratAction(input: {
+  suratId: string;
+  perihal: string;
+  pengirim: string;
+  nomorSurat?: string;
+  isSegera: boolean;
+  batasTindakLanjut?: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  const admin = await requireAdmin();
+  const parsed = updateSuratSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message || "Data surat tidak valid.",
+    };
+  }
+
+  const db = createSupabaseAdmin();
+  const { data: existing } = await db
+    .from("surat")
+    .select("id, divisi_id, kode_arsip")
+    .eq("id", parsed.data.suratId)
+    .single();
+
+  if (!existing) {
+    return { ok: false, error: "Surat tidak ditemukan." };
+  }
+
+  if (!canManageSurat(admin, existing.divisi_id)) {
+    return {
+      ok: false,
+      error:
+        "Hanya divisi pengirim atau Superadmin yang dapat mengubah informasi surat ini.",
+    };
+  }
+
+  const { error } = await db
+    .from("surat")
+    .update({
+      perihal: parsed.data.perihal,
+      pengirim: parsed.data.pengirim,
+      nomor_surat: parsed.data.nomorSurat,
+      is_segera: parsed.data.isSegera,
+      batas_tindak_lanjut: parsed.data.batasTindakLanjut,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", existing.id);
+
+  if (error) {
+    return { ok: false, error: "Gagal menyimpan perubahan surat." };
+  }
+
+  await logAudit({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    divisiId: existing.divisi_id,
+    suratId: existing.id,
+    eventType: "SURAT_UPDATED",
+    eventData: {
+      kodeArsip: existing.kode_arsip,
+      perihal: parsed.data.perihal,
+      pengirim: parsed.data.pengirim,
+      isSegera: parsed.data.isSegera,
+    },
+  });
+
+  revalidatePath("/admin");
+  revalidatePath("/admin/surat");
+  revalidatePath(`/admin/surat/${existing.id}`);
+  return { ok: true };
+}
+
+export async function deleteSuratAction(
+  suratId: string
+): Promise<{ ok: boolean; error?: string }> {
+  const admin = await requireAdmin();
+  const db = createSupabaseAdmin();
+
+  const { data: existing } = await db
+    .from("surat")
+    .select("id, divisi_id, kode_arsip, perihal, file_path")
+    .eq("id", suratId)
+    .single();
+
+  if (!existing) {
+    return { ok: false, error: "Surat tidak ditemukan." };
+  }
+
+  if (!canManageSurat(admin, existing.divisi_id)) {
+    return {
+      ok: false,
+      error:
+        "Hanya divisi pengirim atau Superadmin yang dapat menghapus surat ini.",
+    };
+  }
+
+  // Record audit log BEFORE deleting (surat_id will become NULL via ON DELETE SET NULL, preserving audit trail)
+  await logAudit({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    divisiId: existing.divisi_id,
+    suratId: existing.id,
+    eventType: "SURAT_CANCELLED",
+    eventData: {
+      kodeArsip: existing.kode_arsip,
+      perihal: existing.perihal,
+      deleted: true,
+    },
+  });
+
+  const { error } = await db.from("surat").delete().eq("id", existing.id);
+  if (error) {
+    return { ok: false, error: "Gagal menghapus surat." };
+  }
+
+  if (existing.file_path) {
+    await deleteSuratFile(existing.file_path).catch(() => {});
+  }
+
+  revalidatePath("/admin");
+  revalidatePath("/admin/surat");
+  revalidatePath("/admin/audit");
   return { ok: true };
 }

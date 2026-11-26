@@ -161,3 +161,73 @@ export async function toggleDivisiActiveAction(
   revalidatePath("/admin/surat/baru");
   return { ok: true };
 }
+
+export async function deleteDivisiAction(
+  id: string
+): Promise<DivisiActionResult> {
+  const admin = await requireSuperadmin();
+  const db = createSupabaseAdmin();
+
+  const [suratCount, penerimaCount, profileCount] = await Promise.all([
+    db
+      .from("surat")
+      .select("id", { count: "exact", head: true })
+      .eq("divisi_id", id),
+    db
+      .from("penerima")
+      .select("id", { count: "exact", head: true })
+      .eq("divisi_id", id)
+      .is("deleted_at", null),
+    db
+      .from("profiles")
+      .select("id", { count: "exact", head: true })
+      .eq("divisi_id", id),
+  ]);
+
+  if ((suratCount.count ?? 0) > 0) {
+    return {
+      ok: false,
+      error:
+        "Divisi ini sudah memiliki riwayat surat sehingga tidak bisa dihapus permanen. Gunakan tombol Nonaktif saja.",
+    };
+  }
+  if ((penerimaCount.count ?? 0) > 0 || (profileCount.count ?? 0) > 0) {
+    return {
+      ok: false,
+      error:
+        "Masih ada admin atau penerima aktif di divisi ini. Pindahkan atau hapus mereka terlebih dahulu, atau nonaktifkan divisi ini.",
+    };
+  }
+
+  const { data: existing } = await db
+    .from("divisi")
+    .select("id, nama, kode")
+    .eq("id", id)
+    .single();
+
+  if (!existing) {
+    return { ok: false, error: "Divisi tidak ditemukan." };
+  }
+
+  // Clear references on soft-deleted penerima & audit_logs before deleting
+  await db.from("penerima").update({ divisi_id: null }).eq("divisi_id", id);
+  await db.from("audit_logs").update({ divisi_id: null }).eq("divisi_id", id);
+
+  const { error } = await db.from("divisi").delete().eq("id", id);
+  if (error) {
+    return { ok: false, error: "Gagal menghapus divisi." };
+  }
+
+  await logAudit({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    eventType: "DIVISI_UPDATED",
+    eventData: { nama: existing.nama, kode: existing.kode, deleted: true },
+  });
+
+  revalidatePath("/admin/divisi");
+  revalidatePath("/admin/akun");
+  revalidatePath("/admin/penerima");
+  revalidatePath("/admin/surat/baru");
+  return { ok: true };
+}

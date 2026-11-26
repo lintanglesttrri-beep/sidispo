@@ -2,6 +2,7 @@
 
 import React, { useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   FileText,
@@ -19,6 +20,8 @@ import {
   Clock,
   History,
   BellRing,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { DocumentViewer } from "@/components/receiver/DocumentViewer";
 import { Modal } from "@/components/ui/Modal";
@@ -38,11 +41,13 @@ import {
   formatTanggalWaktuIndo,
 } from "@/lib/format";
 import {
+  deleteSuratAction,
   extendTokenAction,
   markReminderSentAction,
   markWaManualSentAction,
   reissueTokenAction,
   revokeTokenAction,
+  updateSuratAction,
 } from "../actions";
 
 export interface SuratDetailData {
@@ -90,7 +95,19 @@ export interface SuratDetailData {
 }
 
 export function SuratDetailClient({ surat }: { surat: SuratDetailData }) {
+  const router = useRouter();
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [editForm, setEditForm] = useState({
+    perihal: surat.perihal,
+    pengirim: surat.pengirim,
+    nomorSurat: surat.nomorSurat || "",
+    isSegera: surat.isSegera,
+    batasTindakLanjut: surat.batasTindakLanjut
+      ? surat.batasTindakLanjut.slice(0, 10)
+      : "",
+  });
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null);
   const [extendTarget, setExtendTarget] = useState<string | null>(null);
   const [extraDays, setExtraDays] = useState(14);
@@ -179,15 +196,52 @@ export function SuratDetailClient({ surat }: { surat: SuratDetailData }) {
       const res = await markReminderSentAction(disposisiId);
       setFeedback(
         res.ok
-          ? { type: "ok", text: "Pengingat tercatat di riwayat audit." }
+          ? { type: "ok", text: "Pengingat tercatat di riwayat surat." }
           : { type: "error", text: res.error || "Gagal mencatat pengingat." }
       );
     });
   };
 
+  const handleEditSurat = (e: React.FormEvent) => {
+    e.preventDefault();
+    setFeedback(null);
+    startTransition(async () => {
+      const res = await updateSuratAction({
+        suratId: surat.id,
+        ...editForm,
+      });
+      if (!res.ok) {
+        setFeedback({
+          type: "error",
+          text: res.error || "Gagal memperbarui informasi surat.",
+        });
+        return;
+      }
+      setEditOpen(false);
+      setFeedback({ type: "ok", text: "Informasi surat berhasil diperbarui." });
+    });
+  };
+
+  const handleDeleteSurat = () => {
+    setFeedback(null);
+    startTransition(async () => {
+      const res = await deleteSuratAction(surat.id);
+      if (!res.ok) {
+        setDeleteOpen(false);
+        setFeedback({
+          type: "error",
+          text: res.error || "Gagal menghapus surat.",
+        });
+        return;
+      }
+      router.push("/admin/surat");
+      router.refresh();
+    });
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <Link
           href="/admin/surat"
           className="inline-flex items-center gap-1.5 text-xs font-extrabold text-slate-600 hover:text-slate-950 bg-white px-3.5 py-2 rounded-xl border border-slate-200 shadow-2xs"
@@ -196,14 +250,47 @@ export function SuratDetailClient({ surat }: { surat: SuratDetailData }) {
           <span>Kembali ke Daftar Surat</span>
         </Link>
 
-        <button
-          type="button"
-          onClick={() => setPreviewOpen(true)}
-          className="px-4 py-2.5 bg-slate-950 hover:bg-black text-white font-extrabold rounded-xl text-xs flex items-center gap-2 shadow-xs cursor-pointer"
-        >
-          <Eye className="w-3.5 h-3.5 text-amber-400" />
-          <span>Lihat Dokumen Scan</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {surat.canManage && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditForm({
+                    perihal: surat.perihal,
+                    pengirim: surat.pengirim,
+                    nomorSurat: surat.nomorSurat || "",
+                    isSegera: surat.isSegera,
+                    batasTindakLanjut: surat.batasTindakLanjut
+                      ? surat.batasTindakLanjut.slice(0, 10)
+                      : "",
+                  });
+                  setEditOpen(true);
+                }}
+                className="px-4 py-2.5 bg-white hover:bg-slate-100 text-slate-800 border border-slate-200 font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-2xs cursor-pointer"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                <span>Ubah Surat</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeleteOpen(true)}
+                className="px-4 py-2.5 bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Hapus Surat</span>
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => setPreviewOpen(true)}
+            className="px-4 py-2.5 bg-slate-950 hover:bg-black text-white font-extrabold rounded-xl text-xs flex items-center gap-2 shadow-xs cursor-pointer"
+          >
+            <Eye className="w-3.5 h-3.5 text-amber-400" />
+            <span>Lihat Dokumen Scan</span>
+          </button>
+        </div>
       </div>
 
       {feedback && (
@@ -668,6 +755,151 @@ export function SuratDetailClient({ surat }: { surat: SuratDetailData }) {
             >
               {isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               <span>Ya, Nonaktifkan</span>
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Edit Surat Modal */}
+      <Modal
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        title="Ubah Informasi Surat"
+        subtitle={surat.kodeArsip}
+        icon={<Pencil className="w-5 h-5" />}
+      >
+        <form onSubmit={handleEditSurat} className="space-y-4">
+          <div>
+            <label className="block text-xs font-extrabold text-slate-700 uppercase mb-1.5">
+              Perihal Surat *
+            </label>
+            <input
+              type="text"
+              required
+              value={editForm.perihal}
+              onChange={(e) =>
+                setEditForm({ ...editForm, perihal: e.target.value })
+              }
+              className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm text-slate-900"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-extrabold text-slate-700 uppercase mb-1.5">
+                Pengirim / Instansi *
+              </label>
+              <input
+                type="text"
+                required
+                value={editForm.pengirim}
+                onChange={(e) =>
+                  setEditForm({ ...editForm, pengirim: e.target.value })
+                }
+                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-extrabold text-slate-700 uppercase mb-1.5">
+                Nomor Surat
+              </label>
+              <input
+                type="text"
+                value={editForm.nomorSurat}
+                onChange={(e) =>
+                  setEditForm({ ...editForm, nomorSurat: e.target.value })
+                }
+                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-mono text-slate-900"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+            <div>
+              <label className="block text-xs font-extrabold text-slate-700 uppercase mb-1.5">
+                Batas Tindak Lanjut
+              </label>
+              <input
+                type="date"
+                value={editForm.batasTindakLanjut}
+                onChange={(e) =>
+                  setEditForm({
+                    ...editForm,
+                    batasTindakLanjut: e.target.value,
+                  })
+                }
+                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm text-slate-900"
+              />
+            </div>
+
+            <label className="flex items-center gap-2.5 p-3.5 rounded-2xl bg-amber-50 border border-amber-200 cursor-pointer mt-4">
+              <input
+                type="checkbox"
+                checked={editForm.isSegera}
+                onChange={(e) =>
+                  setEditForm({ ...editForm, isSegera: e.target.checked })
+                }
+                className="w-4 h-4 accent-amber-600"
+              />
+              <span className="text-xs font-extrabold text-amber-950">
+                Tandai Sifat SEGERA
+              </span>
+            </label>
+          </div>
+
+          <div className="pt-4 border-t border-slate-100 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setEditOpen(false)}
+              className="px-4 py-2.5 rounded-xl bg-slate-100 text-slate-700 font-bold text-xs cursor-pointer"
+            >
+              Batal
+            </button>
+            <button
+              type="submit"
+              disabled={isPending}
+              className="px-5 py-2.5 rounded-xl bg-slate-950 text-white font-extrabold text-xs flex items-center gap-2 cursor-pointer"
+            >
+              {isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              <span>Simpan Perubahan</span>
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Delete Surat Modal */}
+      <Modal
+        open={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        title="Hapus Surat Ini?"
+        subtitle={surat.kodeArsip}
+        icon={<Trash2 className="w-5 h-5" />}
+        maxWidthClass="max-w-md"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-700 leading-relaxed">
+            Surat <strong className="font-mono">{surat.kodeArsip}</strong> (
+            <strong>{surat.perihal}</strong>) beserta semua tautan penerimanya
+            dan berkas scan akan dihapus. Nomor kode arsip tidak akan dipakai
+            ulang, dan catatan penghapusan tetap tercatat di Riwayat Aktivitas.
+          </p>
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => setDeleteOpen(false)}
+              className="px-4 py-2.5 rounded-xl bg-slate-100 text-slate-700 font-bold text-xs cursor-pointer"
+            >
+              Batal
+            </button>
+            <button
+              type="button"
+              disabled={isPending}
+              onClick={handleDeleteSurat}
+              className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs flex items-center gap-2 cursor-pointer"
+            >
+              {isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              <span>Ya, Hapus Surat</span>
             </button>
           </div>
         </div>

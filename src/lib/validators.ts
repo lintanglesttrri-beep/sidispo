@@ -98,6 +98,10 @@ export const updateAdminAccountSchema = z.object({
     .optional()
     .transform((v) => (v && v.length > 0 ? v : null)),
   isActive: z.boolean(),
+  newPassword: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
 }).superRefine((data, ctx) => {
   if (data.role === "ADMIN_DIVISI" && !data.divisiId) {
     ctx.addIssue({
@@ -106,6 +110,43 @@ export const updateAdminAccountSchema = z.object({
       message: "Admin Divisi wajib memiliki divisi.",
     });
   }
+  if (data.newPassword && data.newPassword.length < 8) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["newPassword"],
+      message: "Password baru minimal 8 karakter.",
+    });
+  }
+});
+
+export const updateSuratSchema = z.object({
+  suratId: z.string().uuid("ID surat tidak valid"),
+  perihal: z
+    .string()
+    .trim()
+    .min(3, "Perihal wajib diisi (minimal 3 karakter)")
+    .max(300, "Perihal maksimal 300 karakter"),
+  pengirim: z
+    .string()
+    .trim()
+    .min(2, "Pengirim / instansi wajib diisi")
+    .max(200, "Pengirim maksimal 200 karakter"),
+  nomorSurat: z
+    .string()
+    .trim()
+    .max(120, "Nomor surat maksimal 120 karakter")
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : null)),
+  isSegera: z.boolean().default(false),
+  batasTindakLanjut: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => {
+      if (!v) return null;
+      const d = new Date(v);
+      return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+    }),
 });
 
 export const penerimaSchema = z.object({
